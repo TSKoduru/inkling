@@ -1,2 +1,5 @@
 venv/
 TODO.md
+progress.md
+node_modules/
+__pycache__/

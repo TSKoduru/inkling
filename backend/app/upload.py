@@ -3,6 +3,7 @@
 from fastapi import APIRouter, UploadFile, File
 from .chunker import chunk_text
 from .db import insert_chunks
+from .embedding import generate_embedding
 import io
 import numpy as np
 
@@ -11,13 +12,6 @@ from markitdown import MarkItDown
 
 router = APIRouter()
 md_converter = MarkItDown()
-
-def embed_text(text: str) -> np.ndarray:
-    """
-    Dummy embedding function for MVP.
-    Replace with your SentenceTransformer embeddings later.
-    """
-    return np.random.rand(384).astype(np.float32)
 
 @router.post("/upload")
 async def upload_files(files: list[UploadFile] = File(...)):
@@ -39,7 +33,7 @@ async def upload_files(files: list[UploadFile] = File(...)):
 
         # Insert chunks + embeddings into DB
         for chunk in chunks:
-            embedding = embed_text(chunk)
+            embedding = generate_embedding(chunk)
             insert_chunks(chunk_text=chunk, embedding=embedding, file_name=file.filename)
 
         total_chunks += len(chunks)

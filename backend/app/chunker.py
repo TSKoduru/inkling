@@ -27,7 +27,7 @@ def chunk_text(text: str):
 
 # Optional quick test
 if __name__ == "__main__":
-    sample_text = "This is a test.\nHere is another line.\nAnd one more paragraph."
+    sample_text = "This is a test.\nHere is another line.\nAnd one more paragraph. I love potatoes, they're so good for you!"
     out = chunk_text(sample_text)
     print("Chunks:", len(out))
     for i, c in enumerate(out, 1):
