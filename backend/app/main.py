@@ -4,9 +4,17 @@ from backend.app.upload import router as upload_router
 from backend.app.db import initialize_db
 from backend.app.debug import router as debug_router
 from backend.app.search import router as search_router
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI
 
 app = FastAPI(title="Inkling MVP")
-
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # for local dev; restrict later
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 # Initialize database on startup
 initialize_db()
 
@@ -21,4 +29,4 @@ def root():
     return {"message": "Inkling backend is running"}
 
 if __name__ == "__main__":
-    uvicorn.run("app.main:app", host="127.0.0.1", port=0, reload=True)
+    uvicorn.run("app.main:app", host="127.0.0.1", port=8000, reload=True)
