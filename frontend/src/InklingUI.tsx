@@ -1,6 +1,6 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Search, File, FileText, Archive, Settings, Upload, X, ChevronRight, Filter, Calendar, Tag, Folder } from 'lucide-react';
-import { searchQuery, uploadFiles } from "./api";
+import { searchQuery, uploadFiles, getStats } from "./api";
 
 const ACCENT_COLORS = {
   purple: { light: '#a78bfa', dark: '#7c3aed', darker: '#5b21b6' },
@@ -17,6 +17,7 @@ export default function InklingUI() {
   const [selectedAccent, setSelectedAccent] = useState('purple');
   const [showSettings, setShowSettings] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   const [sortBy, setSortBy] = useState('relevance');
   const [selectedTag, setSelectedTag] = useState('all');
   const [totalDocuments, setTotalDocuments] = useState(0);
@@ -24,23 +25,9 @@ export default function InklingUI() {
 
   const accent = ACCENT_COLORS[selectedAccent];
 
-  const normalizeScore = (score, allScores) => {
-    const max = Math.max(...allScores);
-    const min = Math.min(...allScores);
-    if (max === min) return 100;
-    return Math.round(((score - min) / (max - min)) * 100);
-  };
-
   const getSortedResults = () => {
     if (results.length === 0) return [];
-
-    const scores = results.map(r => r.rrf_score);
-    const resultsWithNormalizedScores = results.map(r => ({
-      ...r,
-      normalized_score: normalizeScore(r.rrf_score, scores)
-    }));
-
-    let sorted = [...resultsWithNormalizedScores];
+    let sorted = [...results];
 
     if (selectedTag !== 'all') {
       sorted = sorted.filter(r => {
@@ -80,9 +67,6 @@ export default function InklingUI() {
     try {
       const data = await searchQuery(query, 10);
       setResults(data);
-      if (data.total_documents !== undefined) {
-        setTotalDocuments(data.total_documents);
-      }
     } catch (err) {
       console.error("Search error:", err);
       alert("Search failed. Is the backend running on port 8000?");
@@ -100,6 +84,7 @@ export default function InklingUI() {
   const handleFileUpload = async (e) => {
     if (!e.target.files) return;
     const filesArray = Array.from(e.target.files);
+    setIsUploading(true);
 
     try {
       const res = await uploadFiles(filesArray);
@@ -108,9 +93,18 @@ export default function InklingUI() {
       } else {
         alert("Files uploaded successfully!");
       }
+    
+      const updatedStats = await getStats();
+      if (updatedStats.total_documents !== undefined) {
+        setTotalDocuments(updatedStats.total_documents);
+      }
+    
     } catch {
       alert("Upload failed. Please check your backend connection.");
+    } finally {
+      setIsUploading(false);
     }
+    
   };
 
   const getFileIcon = (filename) => {
@@ -144,6 +138,40 @@ export default function InklingUI() {
     if (text.length <= maxLength) return text;
     return text.slice(0, maxLength) + '...';
   };
+
+  function timeAgo(iso) {
+    if (!iso) return '';
+    const diff = Date.now() - new Date(iso).getTime();
+    const s = Math.floor(diff / 1000);
+    if (s < 60) return `${s}s ago`;
+    const m = Math.floor(s / 60);
+    if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h ago`;
+    const d = Math.floor(h / 24);
+    return `${d}d ago`;
+  }
+
+  
+  useEffect(() => {
+    async function fetchStats() {
+      try {
+        const stats = await getStats();
+        if (stats.total_documents !== undefined) {
+          setTotalDocuments(stats.total_documents);
+        }
+      } catch (err) {
+        console.error("Failed to fetch stats:", err);
+      }
+    }
+    fetchStats();
+  }, []);
+  
+  useEffect(() => {
+    if (!query.trim() && results.length > 0) {
+      setResults([]);
+    }
+  }, [query, results.length]); 
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col">
@@ -377,15 +405,6 @@ export default function InklingUI() {
                             {result.file_name}
                           </h3>
                           <div className="flex items-center gap-2 flex-shrink-0">
-                            <div 
-                              className="px-2 py-1 rounded text-xs font-medium"
-                              style={{ 
-                                backgroundColor: `${accent.dark}20`,
-                                color: accent.light
-                              }}
-                            >
-                              {result.normalized_score}%
-                            </div>
                             <button 
                               className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity bg-zinc-800 hover:bg-zinc-700"
                               title="Open file"
@@ -395,7 +414,7 @@ export default function InklingUI() {
                           </div>
                         </div>
 
-                        <p className="text-sm leading-relaxed text-zinc-400">
+                        <p className="text-sm leading-relaxed text-zinc-400 break-words">
                           {truncateText(result.chunk_text, 180)}
                         </p>
                       </div>
@@ -450,6 +469,19 @@ export default function InklingUI() {
             All data stays local on your machine • Powered by semantic search
           </p>
         </div>
+
+        {isUploading && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+            <div className="flex flex-col items-center p-8 rounded-xl bg-zinc-900 shadow-2xl border border-zinc-700">
+              <div 
+                className="w-10 h-10 rounded-full border-4 border-t-transparent animate-spin mb-4"
+                style={{ borderColor: `${accent.light} transparent ${accent.light} ${accent.light}` }}
+              />
+              <p className="text-lg font-medium text-zinc-200">Processing Upload...</p>
+              <p className="text-sm text-zinc-400 mt-1">This may take a moment for large files.</p>
+            </div>
+          </div>
+        )}
       </footer>
     </div>
   );

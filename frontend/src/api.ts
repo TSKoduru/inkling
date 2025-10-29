@@ -23,4 +23,17 @@ export async function uploadFiles(files: File[]) {
   return await response.json();
 }
 
+export async function getStats() {
+  const res = await fetch(`${API_BASE}/stats`);
+  if (!res.ok) throw new Error("Failed to fetch stats");
+  return res.json();
+}
+
+export const openFile = async (fileName) => {
+  const response = await fetch(`http://127.0.0.1:8000/open-file/${fileName}`);
+  if (!response.ok) {
+      throw new Error("Failed to open file via backend.");
+  }
+  return response.json();
+};
   

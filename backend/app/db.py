@@ -5,6 +5,9 @@ import numpy as np
 from pathlib import Path
 import os
 import platform
+from datetime import datetime, timezone
+import shutil
+import uuid
 
 # -------------------------------
 # App Data Directory
@@ -25,6 +28,9 @@ INKLING_DIR.mkdir(parents=True, exist_ok=True)
 # Database file path
 DB_PATH = INKLING_DIR / "index.sqlite"
 
+# Local file storage directory
+FILES_DIR = INKLING_DIR / "files"
+FILES_DIR.mkdir(exist_ok=True)
 
 # -------------------------------
 # Database Helpers
@@ -48,7 +54,8 @@ def initialize_db():
         id INTEGER PRIMARY KEY,
         file_name TEXT NOT NULL,
         chunk_text TEXT NOT NULL,
-        embedding BLOB NOT NULL
+        embedding BLOB NOT NULL,
+        date_added TEXT NOT NULL
     );
     """)
 
@@ -64,6 +71,22 @@ def initialize_db():
     conn.commit()
     conn.close()
 
+# -------------------------------
+# File Storage Helpers
+# -------------------------------
+
+def save_file_locally(src_path: str, file_name: str) -> Path:
+    """
+    Copies a file to the local Inkling file store.
+    Returns the path to the saved file.
+    """
+    dest_path = FILES_DIR / file_name
+    shutil.copy2(src_path, dest_path)
+    return dest_path
+
+# -------------------------------
+# Chunking / DB Insert
+# -------------------------------
 
 def insert_chunks(chunk_text: str, embedding: np.ndarray, file_name: str):
     """Inserts a chunk and its embedding into the database and updates FTS5."""
@@ -71,10 +94,11 @@ def insert_chunks(chunk_text: str, embedding: np.ndarray, file_name: str):
     cursor = conn.cursor()
 
     embedding_bytes = embedding.tobytes()
+    date_added = datetime.now(timezone.utc).isoformat()
 
     cursor.execute(
-        "INSERT INTO chunks (file_name, chunk_text, embedding) VALUES (?, ?, ?)",
-        (file_name, chunk_text, embedding_bytes)
+        "INSERT INTO chunks (file_name, chunk_text, embedding, date_added) VALUES (?, ?, ?, ?)",
+        (file_name, chunk_text, embedding_bytes, date_added)
     )
     chunk_id = cursor.lastrowid
 
@@ -105,3 +129,36 @@ def clear_db():
     cursor.execute("DELETE FROM chunks_fts;")
     conn.commit()
     conn.close()
+
+# -------------------------------
+# Ingest File
+# -------------------------------
+
+def ingest_file(file_path: str, chunker, embedder):
+    """
+    Ingests a file into the local store and DB:
+    1. Saves it locally
+    2. Chunks it
+    3. Inserts chunks and embeddings into DB
+    """
+    original_name = Path(file_path).name
+    # Generate a unique filename to prevent collisions
+    unique_name = f"{uuid.uuid4().hex}_{original_name}"
+    local_path = save_file_locally(file_path, unique_name)
+
+    # Split into chunks using user-provided chunker
+    chunks = chunker(local_path)  # should return list of strings
+
+    for chunk_text in chunks:
+        embedding = embedder(chunk_text)  # should return np.ndarray
+        insert_chunks(chunk_text, embedding, unique_name)
+
+    return unique_name  # local stored file name for frontend reference
+
+# -------------------------------
+# Fetch stored file path
+# -------------------------------
+
+def get_file_path(file_name: str) -> Path:
+    """Returns the Path to a locally stored file."""
+    return FILES_DIR / file_name

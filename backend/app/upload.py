@@ -29,6 +29,7 @@ async def upload_files(files: list[UploadFile] = File(...)):
             return JSONResponse(status_code=400, content={"error": f"Failed to parse {file.filename}: {str(e)}"})
 
         chunks = chunk_text(text)
+        chunks.append(file.filename) # Make sure to include filename, has important context
         for chunk in chunks:
             embedding = generate_embedding(chunk)
             insert_chunks(chunk_text=chunk, embedding=embedding, file_name=file.filename)
