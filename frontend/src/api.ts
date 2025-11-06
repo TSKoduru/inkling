@@ -44,4 +44,6 @@ export async function openFile(fileName: string) {
   return await res.blob();
 }
 
-  
+export function getThumbnailUrl(fileName: string): string {
+  return `${API_BASE}/thumbnail/${encodeURIComponent(fileName)}`;
+}  

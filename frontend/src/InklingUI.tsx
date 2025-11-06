@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Search, File, FileText, Archive, Settings, Upload, X, ChevronRight, Filter, Calendar, Tag, Folder } from 'lucide-react';
-import { searchQuery, uploadFiles, getStats, openFile } from "./api";
+import { searchQuery, uploadFiles, getStats, openFile, getThumbnailUrl } from "./api";
 
 const ACCENT_COLORS = {
   purple: { light: '#a78bfa', dark: '#7c3aed', darker: '#5b21b6' },
@@ -21,9 +21,26 @@ export default function InklingUI() {
   const [sortBy, setSortBy] = useState('relevance');
   const [selectedTag, setSelectedTag] = useState('all');
   const [totalDocuments, setTotalDocuments] = useState(0);
-  const fileInputRef = useRef(null);
+  const [notifications, setNotifications] = useState<{id: number, message: string, type: 'success' | 'error', fading?: boolean}[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isAppLoading, setIsAppLoading] = useState(true);
+  const [loadingMessage, setLoadingMessage] = useState("Connecting to backend...");
 
   const accent = ACCENT_COLORS[selectedAccent];
+
+  // Notification helpers
+  const showNotification = (message: string, type: 'success' | 'error' = 'success', duration = 3000) => {
+    const id = Date.now();
+    setNotifications(prev => [...prev, { id, message, type }]);
+  
+    setTimeout(() => {
+      // trigger fade
+      setNotifications(prev => prev.map(n => n.id === id ? { ...n, fading: true } : n));
+      setTimeout(() => {
+        setNotifications(prev => prev.filter(n => n.id !== id));
+      }, 500); // match CSS transition
+    }, duration);
+  };
 
   const getSortedResults = () => {
     if (results.length === 0) return [];
@@ -68,46 +85,46 @@ export default function InklingUI() {
       const data = await searchQuery(query, 10);
       setResults(data);
     } catch (err) {
-      console.error("Search error:", err);
-      alert("Search failed. Is the backend running on port 8000?");
+      showNotification("Search failed.", 'error');
     } finally {
       setIsSearching(false);
     }
   };
 
-  const handleKeyDown = (e) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       handleSearch();
     }
   };
 
-  const handleFileUpload = async (e) => {
-    if (!e.target.files) return;
-    const filesArray = Array.from(e.target.files);
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const filesArray = e.target.files ? Array.from(e.target.files) : [];
+    if (filesArray.length === 0) { // User hit cancel, end the request early.
+      return;
+    }
+  
     setIsUploading(true);
-
+  
     try {
       const res = await uploadFiles(filesArray);
       if (res?.message) {
-        alert(res.message);
-      } else {
-        alert("Files uploaded successfully!");
+        showNotification(res.message, "success");
       }
-    
+      // Update stats
       const updatedStats = await getStats();
       if (updatedStats.total_documents !== undefined) {
         setTotalDocuments(updatedStats.total_documents);
       }
-    
-    } catch {
-      alert("Upload failed. Please check your backend connection.");
+    } catch (err) {
+      showNotification("Upload failed. Please check your backend.", "error");
     } finally {
       setIsUploading(false);
+      e.target.value = "";
     }
-    
   };
+  
 
-  const getFileIcon = (filename) => {
+  const getFileIcon = (filename: string) => {
     const ext = filename.split('.').pop().toLowerCase();
     switch (ext) {
       case 'pdf': return <FileText className="w-5 h-5" />;
@@ -116,44 +133,38 @@ export default function InklingUI() {
     }
   };
 
-  const getFilePreview = (result) => {
-    if (result.thumbnail_url) {
-      return (
-        <img 
-          src={result.thumbnail_url} 
-          alt={`Preview of ${result.file_name}`}
-          className="w-full h-full object-cover rounded-lg"
-        />
-      );
-    }
-
+  const getFilePreview = (result: any) => {
+    const thumbnailUrl = getThumbnailUrl(result.file_name);
+  
     return (
-      <div className="w-full h-full flex items-center justify-center">
-        {getFileIcon(result.file_name)}
-      </div>
+      <img
+        src={thumbnailUrl}
+        alt={`Preview of ${result.file_name}`}
+        className="w-full h-full object-cover rounded-lg"
+        onError={(e) => {
+          // fallback to icon if thumbnail fails to load
+          const target = e.currentTarget as HTMLImageElement;
+          target.onerror = null; // prevent infinite loop
+          target.replaceWith(
+            document.createElement("div")
+          );
+          const container = target.parentElement;
+          if (container) {
+            container.className = "w-full h-full flex items-center justify-center";
+            container.innerHTML = "";
+            const icon = getFileIcon(result.file_name);
+            container.appendChild(icon as any); // cast since react element won't append directly
+          }
+        }}
+      />
     );
   };
+  
 
   async function handleOpenFile(fileName: string) {
-    // Create a visual indicator
-    const indicator = document.createElement("div");
-    indicator.innerText = `Downloading ${fileName}...`;
-    indicator.style.position = "fixed";
-    indicator.style.top = "10px";
-    indicator.style.right = "10px";
-    indicator.style.backgroundColor = "rgba(0,0,0,0.7)";
-    indicator.style.color = "white";
-    indicator.style.padding = "8px 12px";
-    indicator.style.borderRadius = "4px";
-    indicator.style.zIndex = "9999";
-    document.body.appendChild(indicator);
-  
     try {
-      console.log("Calling openFile API for", fileName);
       const blob = await openFile(fileName);
-      console.log("Received blob:", blob);
-  
-      // Always trigger download
+
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -162,24 +173,14 @@ export default function InklingUI() {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-  
-      // Update indicator text and fade after 2 seconds
-      indicator.innerText = `Downloaded ${fileName}`;
-      setTimeout(() => {
-        indicator.style.transition = "opacity 0.5s";
-        indicator.style.opacity = "0";
-        setTimeout(() => indicator.remove(), 500);
-      }, 2000);
-  
+
+      showNotification(`Downloaded ${fileName}`, 'success');
     } catch (err) {
-      console.error("Failed to download file:", err);
-      indicator.innerText = `Failed to download ${fileName}`;
-      setTimeout(() => indicator.remove(), 3000);
-      alert("Failed to download file.");
+      showNotification(`Failed to download ${fileName}`, 'error');
     }
   }
 
-  const truncateText = (text, maxLength = 200) => {
+  const truncateText = (text: string, maxLength = 200) => {
     if (text.length <= maxLength) return text;
     return text.slice(0, maxLength) + '...';
   };
@@ -192,11 +193,34 @@ export default function InklingUI() {
           setTotalDocuments(stats.total_documents);
         }
       } catch (err) {
-        console.error("Failed to fetch stats:", err);
+        showNotification('Failed to update stats', 'error');
       }
     }
     fetchStats();
   }, []);
+
+  useEffect(() => {
+    let interval: NodeJS.Timer;
+  
+    async function checkBackend() {
+      try {
+        await getStats(); // lightweight endpoint
+        setIsAppLoading(false); // backend is ready, hide loader
+      } catch (err) {
+        console.warn("Backend not ready, retrying...", err);
+        setLoadingMessage("Backend starting, please wait...");
+      }
+    }
+  
+    // Retry every second until backend responds
+    interval = setInterval(checkBackend, 1000);
+  
+    // Try immediately once on mount
+    checkBackend();
+  
+    return () => clearInterval(interval);
+  }, []);
+  
   
   useEffect(() => {
     if (!query.trim() && results.length > 0) {
@@ -206,6 +230,35 @@ export default function InklingUI() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col">
+      {/* Loading screen */ }
+      {isAppLoading && (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-zinc-950 text-white">
+          <div className="w-16 h-16 border-4 border-t-transparent rounded-full animate-spin mb-4"
+            style={{ borderColor: `${accent.light} transparent ${accent.light} ${accent.light}` }}
+          />
+          <p className="text-lg font-medium">Starting up...</p>
+          <p className="text-sm text-zinc-400 mt-2">Connecting to backend...</p>
+        </div>
+      )}
+
+      {/* Notifications */}
+      <div className="fixed top-4 right-4 z-50 flex flex-col gap-2">
+        {notifications.map(n => (
+          <div
+            key={n.id}
+            className={`px-4 py-2 rounded-lg shadow-lg text-sm text-white transform transition-all duration-500 ${
+              n.fading ? 'opacity-0 -translate-y-2' : 'opacity-100 translate-y-0'
+            }`}
+            style={{
+              backgroundColor: accent.dark,
+              border: `2px solid ${n.type === 'success' ? '#16a34a' : '#dc2626'}`, // green/red outline
+            }}
+          >
+            {n.message}
+          </div>
+        ))}
+      </div>
+      <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col">
       <header className="border-b border-zinc-800 bg-zinc-900/50 backdrop-blur-sm sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -232,7 +285,7 @@ export default function InklingUI() {
               multiple
               onChange={handleFileUpload}
               className="hidden"
-              accept=".pdf,.txt,.zip,.md"
+              accept=".pdf,.txt,.zip,.md,.html,.png,.jpg"
             />
           </div>
         </div>
@@ -437,7 +490,7 @@ export default function InklingUI() {
                           </h3>
                           <div className="flex items-center gap-2 flex-shrink-0">
                             <button
-                              className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity bg-zinc-800 hover:bg-zinc-700"
+                              className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity bg-zinc-800 hover:bg-zinc-700 cursor-pointer" 
                               title="Open file"
                               onClick={() => handleOpenFile(result.file_name)}
                             >
@@ -515,6 +568,7 @@ export default function InklingUI() {
           </div>
         )}
       </footer>
+    </div>
     </div>
   );
 }

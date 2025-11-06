@@ -2,14 +2,12 @@
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
-from .db import get_file_path
-import logging
+from pathlib import Path
+from .db import FILES_DIR, get_file_path
 
 router = APIRouter()
+THUMBNAILS_DIR = FILES_DIR.parent / "thumbnails"
 
-# Set up logging
-logger = logging.getLogger("files")
-logging.basicConfig(level=logging.DEBUG)
 
 @router.post("/open_file")
 async def open_file(request: Request):
@@ -17,14 +15,18 @@ async def open_file(request: Request):
     filename = data.get("filename")
     if not filename:
         raise HTTPException(status_code=400, detail="No filename provided")
-
-    print("[DEBUG] open_file called with filename:", filename)
     path = get_file_path(filename)
-    print("[DEBUG] Resolved path:", path.resolve())
-
     if not path.exists():
-        print("[ERROR] File not found at path:", path.resolve())
         raise HTTPException(status_code=404, detail=f"File {filename} not found")
-
-    print("[INFO] Returning file:", path.resolve())
     return FileResponse(path, filename=filename)
+
+@router.get("/thumbnail/{filename}")
+async def get_thumbnail(filename: str):
+    """
+    Returns the thumbnail for a given file.
+    Example URL: /thumbnail/example.pdf
+    """
+    thumb_path = THUMBNAILS_DIR / f"{filename}.png"
+    if not thumb_path.exists():
+        raise HTTPException(status_code=404, detail=f"Thumbnail for {filename} not found")
+    return FileResponse(thumb_path, filename=f"{filename}.png")
