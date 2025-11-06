@@ -157,7 +157,6 @@ def reciprocal_rank_fusion(
 
     # Sort by score and cap to top k
     merged_results.sort(key=lambda x: x["rrf_score"], reverse=True)
-    print("Merged results:", [r["file_name"] for r in merged_results])
     return merged_results[: min(k, len(merged_results))]
 
 # -------------------------------

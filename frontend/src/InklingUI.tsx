@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Search, File, FileText, Archive, Settings, Upload, X, ChevronRight, Filter, Calendar, Tag, Folder } from 'lucide-react';
-import { searchQuery, uploadFiles, getStats } from "./api";
+import { searchQuery, uploadFiles, getStats, openFile } from "./api";
 
 const ACCENT_COLORS = {
   purple: { light: '#a78bfa', dark: '#7c3aed', darker: '#5b21b6' },
@@ -134,25 +134,56 @@ export default function InklingUI() {
     );
   };
 
+  async function handleOpenFile(fileName: string) {
+    // Create a visual indicator
+    const indicator = document.createElement("div");
+    indicator.innerText = `Downloading ${fileName}...`;
+    indicator.style.position = "fixed";
+    indicator.style.top = "10px";
+    indicator.style.right = "10px";
+    indicator.style.backgroundColor = "rgba(0,0,0,0.7)";
+    indicator.style.color = "white";
+    indicator.style.padding = "8px 12px";
+    indicator.style.borderRadius = "4px";
+    indicator.style.zIndex = "9999";
+    document.body.appendChild(indicator);
+  
+    try {
+      console.log("Calling openFile API for", fileName);
+      const blob = await openFile(fileName);
+      console.log("Received blob:", blob);
+  
+      // Always trigger download
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+  
+      // Update indicator text and fade after 2 seconds
+      indicator.innerText = `Downloaded ${fileName}`;
+      setTimeout(() => {
+        indicator.style.transition = "opacity 0.5s";
+        indicator.style.opacity = "0";
+        setTimeout(() => indicator.remove(), 500);
+      }, 2000);
+  
+    } catch (err) {
+      console.error("Failed to download file:", err);
+      indicator.innerText = `Failed to download ${fileName}`;
+      setTimeout(() => indicator.remove(), 3000);
+      alert("Failed to download file.");
+    }
+  }
+
   const truncateText = (text, maxLength = 200) => {
     if (text.length <= maxLength) return text;
     return text.slice(0, maxLength) + '...';
   };
 
-  function timeAgo(iso) {
-    if (!iso) return '';
-    const diff = Date.now() - new Date(iso).getTime();
-    const s = Math.floor(diff / 1000);
-    if (s < 60) return `${s}s ago`;
-    const m = Math.floor(s / 60);
-    if (m < 60) return `${m}m ago`;
-    const h = Math.floor(m / 60);
-    if (h < 24) return `${h}h ago`;
-    const d = Math.floor(h / 24);
-    return `${d}d ago`;
-  }
-
-  
   useEffect(() => {
     async function fetchStats() {
       try {
@@ -405,9 +436,10 @@ export default function InklingUI() {
                             {result.file_name}
                           </h3>
                           <div className="flex items-center gap-2 flex-shrink-0">
-                            <button 
+                            <button
                               className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity bg-zinc-800 hover:bg-zinc-700"
                               title="Open file"
+                              onClick={() => handleOpenFile(result.file_name)}
                             >
                               <ChevronRight className="w-4 h-4" />
                             </button>

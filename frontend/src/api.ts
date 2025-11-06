@@ -29,11 +29,19 @@ export async function getStats() {
   return res.json();
 }
 
-export const openFile = async (fileName) => {
-  const response = await fetch(`http://127.0.0.1:8000/open-file/${fileName}`);
-  if (!response.ok) {
-      throw new Error("Failed to open file via backend.");
+export async function openFile(fileName: string) {
+  const res = await fetch(`${API_BASE}/open_file`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filename: fileName }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to open file (${res.status})`);
   }
-  return response.json();
-};
+
+  return await res.blob();
+}
+
   

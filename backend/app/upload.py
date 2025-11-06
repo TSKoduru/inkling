@@ -1,14 +1,11 @@
 # backend/app/upload.py
 
 from fastapi import APIRouter, UploadFile, File
+from fastapi.responses import JSONResponse
+from .db import save_file_locally, insert_chunks
 from .chunker import chunk_text
-from .db import insert_chunks
 from .embedding import generate_embedding
 import io
-import numpy as np
-from fastapi.responses import JSONResponse
-
-# Import MarkItDown for file parsing
 from markitdown import MarkItDown
 
 router = APIRouter()
@@ -20,16 +17,20 @@ async def upload_files(files: list[UploadFile] = File(...)):
 
     for file in files:
         contents = await file.read()
-        stream = io.BytesIO(contents)
 
+        # Save file locally
+        saved_path = save_file_locally(contents, file.filename)
+
+        # Convert file to text
         try:
-            md_result = md_converter.convert_stream(stream, filename=file.filename)
+            md_result = md_converter.convert_stream(io.BytesIO(contents), filename=file.filename)
             text = md_result.text_content
         except Exception as e:
             return JSONResponse(status_code=400, content={"error": f"Failed to parse {file.filename}: {str(e)}"})
 
+        # Chunk and insert into DB
         chunks = chunk_text(text)
-        chunks.append(file.filename) # Make sure to include filename, has important context
+        chunks.append(file.filename)  # Keep filename context
         for chunk in chunks:
             embedding = generate_embedding(chunk)
             insert_chunks(chunk_text=chunk, embedding=embedding, file_name=file.filename)

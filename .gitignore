@@ -2,4 +2,4 @@ venv/
 TODO.md
 progress.md
 node_modules/
-*/__pycache__/
+__pycache__/
