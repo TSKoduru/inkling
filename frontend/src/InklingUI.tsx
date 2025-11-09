@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, File, FileText, Archive, Settings, Upload, X, ChevronRight, Filter, Calendar, Tag, Folder } from 'lucide-react';
-import { searchQuery, uploadFiles, getStats, openFile, getThumbnailUrl } from "./api";
+import { Search, File, FileText, Archive, Settings, Upload, ChevronRight, Filter, Tag, Folder } from 'lucide-react';
+import { searchQuery, uploadFiles, getStats, openFile, getThumbnailUrl, startBackend } from "./api";
+
 
 const ACCENT_COLORS = {
   purple: { light: '#a78bfa', dark: '#7c3aed', darker: '#5b21b6' },
@@ -11,9 +12,103 @@ const ACCENT_COLORS = {
   teal: { light: '#2dd4bf', dark: '#0d9488', darker: '#115e59' },
 };
 
+// Separate component for file preview to avoid hook violations
+function FilePreviewCard({ result, accent, onOpenFile }: { result: any; accent: any; onOpenFile: (name: string) => void }) {
+  const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+
+    (async () => {
+      try {
+        const url = await getThumbnailUrl(result.file_name);
+        if (mounted) setThumbnailUrl(url);
+      } catch (err) {
+        console.error("Failed to load thumbnail:", err);
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, [result.file_name]);
+
+  const getFileIcon = (filename: string) => {
+    const ext = filename?.split('.').pop()?.toLowerCase() || '';
+    switch (ext) {
+      case 'pdf': return <FileText className="w-5 h-5" />;
+      case 'zip': return <Archive className="w-5 h-5" />;
+      default: return <File className="w-5 h-5" />;
+    }
+  };
+
+  const truncateText = (text: string, maxLength = 180) => {
+    if (text.length <= maxLength) return text;
+    return text.slice(0, maxLength) + '...';
+  };
+
+  return (
+    <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 hover:border-zinc-700 transition-all group cursor-pointer">
+      <div className="flex gap-4">
+        <div 
+          className="w-24 h-32 rounded-lg flex-shrink-0 overflow-hidden border border-zinc-800"
+          style={{ backgroundColor: `${accent.dark}15` }}
+        >
+          {!thumbnailUrl ? (
+            <div className="w-full h-full flex items-center justify-center bg-gray-100 text-gray-500 rounded-lg">
+              <div className="text-sm text-zinc-500">Loading...</div>
+            </div>
+          ) : (
+            <img
+              src={thumbnailUrl}
+              alt={`Preview of ${result.file_name}`}
+              className="w-full h-full object-cover rounded-lg"
+              onError={(e) => {
+                const target = e.currentTarget;
+                target.style.display = 'none';
+                const container = target.parentElement;
+                if (container) {
+                  const icon = getFileIcon(result.file_name);
+                  container.innerHTML = '';
+                  container.className = 'w-full h-full flex items-center justify-center text-zinc-400';
+                  // Create a wrapper for the icon
+                  const wrapper = document.createElement('div');
+                  wrapper.className = 'flex items-center justify-center';
+                  container.appendChild(wrapper);
+                }
+              }}
+            />
+          )}
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <div className="flex items-start justify-between gap-3 mb-2">
+            <h3 className="font-medium truncate text-zinc-200">
+              {result.file_name}
+            </h3>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button
+                className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity bg-zinc-800 hover:bg-zinc-700 cursor-pointer" 
+                title="Open file"
+                onClick={() => onOpenFile(result.file_name)}
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          <p className="text-sm leading-relaxed text-zinc-400 break-words">
+            {truncateText(result.chunk_text)}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function InklingUI() {
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState([]);
+  const [results, setResults] = useState<any[]>([]);
   const [selectedAccent, setSelectedAccent] = useState('purple');
   const [showSettings, setShowSettings] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
@@ -22,11 +117,10 @@ export default function InklingUI() {
   const [selectedTag, setSelectedTag] = useState('all');
   const [totalDocuments, setTotalDocuments] = useState(0);
   const [notifications, setNotifications] = useState<{id: number, message: string, type: 'success' | 'error', fading?: boolean}[]>([]);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [isAppLoading, setIsAppLoading] = useState(true);
-  const [loadingMessage, setLoadingMessage] = useState("Connecting to backend...");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const accent = ACCENT_COLORS[selectedAccent];
+  const accent = ACCENT_COLORS[selectedAccent as keyof typeof ACCENT_COLORS];
 
   // Notification helpers
   const showNotification = (message: string, type: 'success' | 'error' = 'success', duration = 3000) => {
@@ -34,11 +128,10 @@ export default function InklingUI() {
     setNotifications(prev => [...prev, { id, message, type }]);
   
     setTimeout(() => {
-      // trigger fade
       setNotifications(prev => prev.map(n => n.id === id ? { ...n, fading: true } : n));
       setTimeout(() => {
         setNotifications(prev => prev.filter(n => n.id !== id));
-      }, 500); // match CSS transition
+      }, 500);
     }, duration);
   };
 
@@ -64,7 +157,7 @@ export default function InklingUI() {
         sorted.sort((a, b) => {
           const dateA = new Date(a.date_added || 0);
           const dateB = new Date(b.date_added || 0);
-          return dateB - dateA;
+          return new Date(dateB).getTime() - new Date(dateA).getTime();
         });
         break;
       case 'relevance':
@@ -99,7 +192,7 @@ export default function InklingUI() {
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const filesArray = e.target.files ? Array.from(e.target.files) : [];
-    if (filesArray.length === 0) { // User hit cancel, end the request early.
+    if (filesArray.length === 0) {
       return;
     }
   
@@ -110,7 +203,6 @@ export default function InklingUI() {
       if (res?.message) {
         showNotification(res.message, "success");
       }
-      // Update stats
       const updatedStats = await getStats();
       if (updatedStats.total_documents !== undefined) {
         setTotalDocuments(updatedStats.total_documents);
@@ -122,49 +214,10 @@ export default function InklingUI() {
       e.target.value = "";
     }
   };
-  
-
-  const getFileIcon = (filename: string) => {
-    const ext = filename.split('.').pop().toLowerCase();
-    switch (ext) {
-      case 'pdf': return <FileText className="w-5 h-5" />;
-      case 'zip': return <Archive className="w-5 h-5" />;
-      default: return <File className="w-5 h-5" />;
-    }
-  };
-
-  const getFilePreview = (result: any) => {
-    const thumbnailUrl = getThumbnailUrl(result.file_name);
-  
-    return (
-      <img
-        src={thumbnailUrl}
-        alt={`Preview of ${result.file_name}`}
-        className="w-full h-full object-cover rounded-lg"
-        onError={(e) => {
-          // fallback to icon if thumbnail fails to load
-          const target = e.currentTarget as HTMLImageElement;
-          target.onerror = null; // prevent infinite loop
-          target.replaceWith(
-            document.createElement("div")
-          );
-          const container = target.parentElement;
-          if (container) {
-            container.className = "w-full h-full flex items-center justify-center";
-            container.innerHTML = "";
-            const icon = getFileIcon(result.file_name);
-            container.appendChild(icon as any); // cast since react element won't append directly
-          }
-        }}
-      />
-    );
-  };
-  
 
   async function handleOpenFile(fileName: string) {
     try {
       const blob = await openFile(fileName);
-
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -173,18 +226,13 @@ export default function InklingUI() {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-
       showNotification(`Downloaded ${fileName}`, 'success');
     } catch (err) {
       showNotification(`Failed to download ${fileName}`, 'error');
     }
   }
 
-  const truncateText = (text: string, maxLength = 200) => {
-    if (text.length <= maxLength) return text;
-    return text.slice(0, maxLength) + '...';
-  };
-
+  // Fetch initial stats
   useEffect(() => {
     async function fetchStats() {
       try {
@@ -199,38 +247,82 @@ export default function InklingUI() {
     fetchStats();
   }, []);
 
+  // Initialize backend on app load
   useEffect(() => {
-    let interval: NodeJS.Timer;
-  
-    async function checkBackend() {
-      try {
-        await getStats(); // lightweight endpoint
-        setIsAppLoading(false); // backend is ready, hide loader
-      } catch (err) {
-        console.warn("Backend not ready, retrying...", err);
-        setLoadingMessage("Backend starting, please wait...");
-      }
+    console.log("=== INITIALIZATION STARTING ===");
+    // Check for Tauri more robustly - it might not be in window immediately
+    const isTauri = typeof window !== 'undefined' && (
+      '__TAURI__' in window || 
+      (window as any).__TAURI_INTERNALS__ !== undefined ||
+      typeof (window as any).__TAURI__ !== 'undefined'
+    );
+    console.log("isTauri detected as:", isTauri);
+    console.log("window.__TAURI__:", (window as any).__TAURI__);
+    console.log("window.__TAURI_INTERNALS__:", (window as any).__TAURI_INTERNALS__);
+    
+    if (!isTauri) {
+      console.log("Running in browser mode - backend should be started manually");
+      setIsAppLoading(false);
+      return;
     }
+
+    let interval: ReturnType<typeof setInterval>;
+    let backendStarted = false;
   
-    // Retry every second until backend responds
-    interval = setInterval(checkBackend, 1000);
+    async function initializeBackend() {
+      if (!backendStarted) {
+        console.log("🚀 Attempting to start backend...");
+        try {
+          await startBackend();
+          console.log("✅ Backend start command sent successfully.");
+          backendStarted = true;
+        } catch (err) {
+          console.error("❌ Failed to start backend:", err);
+          showNotification("Failed to start backend. Check console.", 'error');
+          setIsAppLoading(false);
+          return;
+        }
+      }
+
+      async function checkBackend() {
+        console.log("🔍 Checking backend availability...");
+        try {
+          const stats = await getStats();
+          console.log("✅ Backend responded successfully:", stats);
+          setIsAppLoading(false);
+          clearInterval(interval);
+        } catch (err) {
+          console.warn("⏳ Backend not ready, retrying...", err);
+        }
+      }
+    
+      interval = setInterval(checkBackend, 2000);
+      checkBackend();
+    }
+
+    initializeBackend();
   
-    // Try immediately once on mount
-    checkBackend();
-  
-    return () => clearInterval(interval);
+    return () => {
+      if (interval) clearInterval(interval);
+    };
   }, []);
-  
-  
+
+  // Clear results when query is empty
   useEffect(() => {
     if (!query.trim() && results.length > 0) {
       setResults([]);
     }
-  }, [query, results.length]); 
+  }, [query, results.length]);
+
+  // Remove old invoke call - use startBackend from api.ts instead
+  // This was in the original code and causing the error
+  useEffect(() => {
+    // Removed duplicate backend start attempt
+  }, []);
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col">
-      {/* Loading screen */ }
+      {/* Loading screen */}
       {isAppLoading && (
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-zinc-950 text-white">
           <div className="w-16 h-16 border-4 border-t-transparent rounded-full animate-spin mb-4"
@@ -251,14 +343,14 @@ export default function InklingUI() {
             }`}
             style={{
               backgroundColor: accent.dark,
-              border: `2px solid ${n.type === 'success' ? '#16a34a' : '#dc2626'}`, // green/red outline
+              border: `2px solid ${n.type === 'success' ? '#16a34a' : '#dc2626'}`,
             }}
           >
             {n.message}
           </div>
         ))}
       </div>
-      <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col">
+
       <header className="border-b border-zinc-800 bg-zinc-900/50 backdrop-blur-sm sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -299,13 +391,13 @@ export default function InklingUI() {
               <div className="space-y-3">
                 <div>
                   <p className="text-2xl font-semibold" style={{ color: accent.light }}>
-                    {totalDocuments || '—'}
+                    {totalDocuments || '–'}
                   </p>
                   <p className="text-xs text-zinc-500">Total documents</p>
                 </div>
                 <div className="pt-3 border-t border-zinc-800">
                   <p className="text-2xl font-semibold" style={{ color: accent.light }}>
-                    {results.length > 0 ? results.length : '—'}
+                    {results.length > 0 ? results.length : '–'}
                   </p>
                   <p className="text-xs text-zinc-500">Results found</p>
                 </div>
@@ -405,7 +497,6 @@ export default function InklingUI() {
                         }`}
                         style={{ 
                           backgroundColor: color.dark,
-                          ringColor: selectedAccent === name ? color.light : 'transparent'
                         }}
                         title={name.charAt(0).toUpperCase() + name.slice(1)}
                       />
@@ -471,40 +562,12 @@ export default function InklingUI() {
                 </div>
 
                 {sortedResults.map((result) => (
-                  <div
-                    key={result.id}
-                    className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 hover:border-zinc-700 transition-all group cursor-pointer"
-                  >
-                    <div className="flex gap-4">
-                      <div 
-                        className="w-24 h-32 rounded-lg flex-shrink-0 overflow-hidden border border-zinc-800"
-                        style={{ backgroundColor: `${accent.dark}15` }}
-                      >
-                        {getFilePreview(result)}
-                      </div>
-
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-start justify-between gap-3 mb-2">
-                          <h3 className="font-medium truncate text-zinc-200">
-                            {result.file_name}
-                          </h3>
-                          <div className="flex items-center gap-2 flex-shrink-0">
-                            <button
-                              className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity bg-zinc-800 hover:bg-zinc-700 cursor-pointer" 
-                              title="Open file"
-                              onClick={() => handleOpenFile(result.file_name)}
-                            >
-                              <ChevronRight className="w-4 h-4" />
-                            </button>
-                          </div>
-                        </div>
-
-                        <p className="text-sm leading-relaxed text-zinc-400 break-words">
-                          {truncateText(result.chunk_text, 180)}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
+                  <FilePreviewCard 
+                    key={result.id} 
+                    result={result} 
+                    accent={accent}
+                    onOpenFile={handleOpenFile}
+                  />
                 ))}
               </div>
             ) : query ? (
@@ -568,7 +631,6 @@ export default function InklingUI() {
           </div>
         )}
       </footer>
-    </div>
     </div>
   );
 }

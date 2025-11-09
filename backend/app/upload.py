@@ -57,9 +57,11 @@ async def upload_files(files: list[UploadFile] = File(...)):
         # Save file locally
         saved_path = save_file_locally(contents, file.filename)
 
+        # Get file extension
+        ext = file.filename.lower().split(".")[-1]
+
         # Generate thumbnail
         thumbnail_path = THUMBNAILS_DIR / f"{file.filename}.png"
-        ext = file.filename.lower().split(".")[-1]
         if ext == "pdf":
             generate_pdf_thumbnail(contents, thumbnail_path)
         elif ext in ("txt", "md"):
@@ -71,25 +73,28 @@ async def upload_files(files: list[UploadFile] = File(...)):
             generate_text_thumbnail(text_content, thumbnail_path)
         elif ext in ("png", "jpg", "jpeg"):
             generate_image_thumbnail(contents, thumbnail_path)
-        else:
-            # For unknown types, you could copy a generic icon as thumbnail
-            pass
 
         # Convert file to text for chunking
-        if ext not in ("txt", "md"):
+        text_content = None
+        if ext in ("txt", "md"):
+            try:
+                md_result = md_converter.convert_stream(io.BytesIO(contents), filename=file.filename)
+                text_content = md_result.text_content
+            except Exception as e:
+                return JSONResponse(status_code=400, content={"error": f"Failed to parse {file.filename}: {str(e)}"})
+        else:
             try:
                 md_result = md_converter.convert_stream(io.BytesIO(contents), filename=file.filename)
                 text_content = md_result.text_content
             except Exception as e:
                 return JSONResponse(status_code=400, content={"error": f"Failed to parse {file.filename}: {str(e)}"})
 
-        # Chunk and insert into DB
-        chunks = chunk_text(text_content)
-        chunks.append(file.filename)  # Keep filename context
-        for chunk in chunks:
-            embedding = generate_embedding(chunk)
-            insert_chunks(chunk_text=chunk, embedding=embedding, file_name=file.filename)
-
-        total_chunks += len(chunks)
+        # Chunk the text (do NOT append filename to chunks)
+        if text_content:
+            chunks = chunk_text(text_content)
+            for chunk in chunks:
+                embedding = generate_embedding(chunk)
+                insert_chunks(chunk_text=chunk, embedding=embedding, file_name=file.filename)
+            total_chunks += len(chunks)
 
     return JSONResponse(content={"message": f"Uploaded {len(files)} files, {total_chunks} chunks stored."})
