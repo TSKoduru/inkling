@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, File, FileText, Archive, Settings, Upload, ChevronRight, Filter, Tag, Folder } from 'lucide-react';
+import { Search, File, FileText, Settings, Upload, ChevronRight, Filter, Tag, Folder } from 'lucide-react';
 import { searchQuery, uploadFiles, getStats, openFile, getThumbnailUrl, startBackend } from "./api";
-
 
 const ACCENT_COLORS = {
   purple: { light: '#a78bfa', dark: '#7c3aed', darker: '#5b21b6' },
@@ -33,20 +32,6 @@ function FilePreviewCard({ result, accent, onOpenFile }: { result: any; accent: 
     };
   }, [result.file_name]);
 
-  const getFileIcon = (filename: string) => {
-    const ext = filename?.split('.').pop()?.toLowerCase() || '';
-    switch (ext) {
-      case 'pdf': return <FileText className="w-5 h-5" />;
-      case 'zip': return <Archive className="w-5 h-5" />;
-      default: return <File className="w-5 h-5" />;
-    }
-  };
-
-  const truncateText = (text: string, maxLength = 180) => {
-    if (text.length <= maxLength) return text;
-    return text.slice(0, maxLength) + '...';
-  };
-
   return (
     <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 hover:border-zinc-700 transition-all group cursor-pointer">
       <div className="flex gap-4">
@@ -68,13 +53,8 @@ function FilePreviewCard({ result, accent, onOpenFile }: { result: any; accent: 
                 target.style.display = 'none';
                 const container = target.parentElement;
                 if (container) {
-                  const icon = getFileIcon(result.file_name);
                   container.innerHTML = '';
                   container.className = 'w-full h-full flex items-center justify-center text-zinc-400';
-                  // Create a wrapper for the icon
-                  const wrapper = document.createElement('div');
-                  wrapper.className = 'flex items-center justify-center';
-                  container.appendChild(wrapper);
                 }
               }}
             />
@@ -96,10 +76,6 @@ function FilePreviewCard({ result, accent, onOpenFile }: { result: any; accent: 
               </button>
             </div>
           </div>
-
-          <p className="text-sm leading-relaxed text-zinc-400 break-words">
-            {truncateText(result.chunk_text)}
-          </p>
         </div>
       </div>
     </div>
@@ -118,6 +94,7 @@ export default function InklingUI() {
   const [totalDocuments, setTotalDocuments] = useState(0);
   const [notifications, setNotifications] = useState<{id: number, message: string, type: 'success' | 'error', fading?: boolean}[]>([]);
   const [isAppLoading, setIsAppLoading] = useState(true);
+  const [largeFileWarning, setLargeFileWarning] = useState<{show: boolean, files: File[], totalSize: number}>({show: false, files: [], totalSize: 0});
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const accent = ACCENT_COLORS[selectedAccent as keyof typeof ACCENT_COLORS];
@@ -144,7 +121,6 @@ export default function InklingUI() {
         const ext = r.file_name.split('.').pop().toLowerCase();
         if (selectedTag === 'pdf') return ext === 'pdf';
         if (selectedTag === 'text') return ext === 'txt' || ext === 'md';
-        if (selectedTag === 'archive') return ext === 'zip' || ext === 'rar';
         return true;
       });
     }
@@ -196,8 +172,26 @@ export default function InklingUI() {
       return;
     }
   
+    // Check total file size
+    const totalSize = filesArray.reduce((sum, file) => sum + file.size, 0);
+    const totalSizeMB = totalSize / (1024 * 1024);
+    
+    // Warn if files are large (>5MB total)
+    if (totalSizeMB > 5) {
+      setLargeFileWarning({ show: true, files: filesArray, totalSize: totalSizeMB });
+      e.target.value = "";
+      return;
+    }
+    
+    // Otherwise proceed with upload
+    await performUpload(filesArray);
+    e.target.value = "";
+  };
+
+  const performUpload = async (filesArray: File[]) => {
     setIsUploading(true);
-  
+    setLargeFileWarning({ show: false, files: [], totalSize: 0 });
+    
     try {
       const res = await uploadFiles(filesArray);
       if (res?.message) {
@@ -211,7 +205,6 @@ export default function InklingUI() {
       showNotification("Upload failed. Please check your backend.", "error");
     } finally {
       setIsUploading(false);
-      e.target.value = "";
     }
   };
 
@@ -232,7 +225,7 @@ export default function InklingUI() {
     }
   }
 
-  // Fetch initial stats
+  // Fetch initial stats (after backend is connected)
   useEffect(() => {
     async function fetchStats() {
       try {
@@ -241,27 +234,25 @@ export default function InklingUI() {
           setTotalDocuments(stats.total_documents);
         }
       } catch (err) {
-        showNotification('Failed to update stats', 'error');
+        console.warn('Stats fetch failed:', err);
       }
     }
-    fetchStats();
-  }, []);
+
+    // Only fetch stats after app is done loading (backend is ready)
+    if (!isAppLoading) {
+      fetchStats();
+    }
+  }, [isAppLoading]);
 
   // Initialize backend on app load
   useEffect(() => {
-    console.log("=== INITIALIZATION STARTING ===");
-    // Check for Tauri more robustly - it might not be in window immediately
     const isTauri = typeof window !== 'undefined' && (
       '__TAURI__' in window || 
       (window as any).__TAURI_INTERNALS__ !== undefined ||
       typeof (window as any).__TAURI__ !== 'undefined'
     );
-    console.log("isTauri detected as:", isTauri);
-    console.log("window.__TAURI__:", (window as any).__TAURI__);
-    console.log("window.__TAURI_INTERNALS__:", (window as any).__TAURI_INTERNALS__);
     
     if (!isTauri) {
-      console.log("Running in browser mode - backend should be started manually");
       setIsAppLoading(false);
       return;
     }
@@ -271,13 +262,11 @@ export default function InklingUI() {
   
     async function initializeBackend() {
       if (!backendStarted) {
-        console.log("🚀 Attempting to start backend...");
         try {
           await startBackend();
-          console.log("✅ Backend start command sent successfully.");
           backendStarted = true;
         } catch (err) {
-          console.error("❌ Failed to start backend:", err);
+          console.error("Failed to start backend:", err);
           showNotification("Failed to start backend. Check console.", 'error');
           setIsAppLoading(false);
           return;
@@ -285,10 +274,7 @@ export default function InklingUI() {
       }
 
       async function checkBackend() {
-        console.log("🔍 Checking backend availability...");
         try {
-          const stats = await getStats();
-          console.log("✅ Backend responded successfully:", stats);
           setIsAppLoading(false);
           clearInterval(interval);
         } catch (err) {
@@ -307,21 +293,14 @@ export default function InklingUI() {
     };
   }, []);
 
-  // Clear results when query is empty
   useEffect(() => {
     if (!query.trim() && results.length > 0) {
       setResults([]);
     }
   }, [query, results.length]);
 
-  // Remove old invoke call - use startBackend from api.ts instead
-  // This was in the original code and causing the error
-  useEffect(() => {
-    // Removed duplicate backend start attempt
-  }, []);
-
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col">
+    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col overflow-hidden">
       {/* Loading screen */}
       {isAppLoading && (
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-zinc-950 text-white">
@@ -333,8 +312,60 @@ export default function InklingUI() {
         </div>
       )}
 
-      {/* Notifications */}
-      <div className="fixed top-4 right-4 z-50 flex flex-col gap-2">
+      {/* Large file warning modal */}
+      {largeFileWarning.show && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="flex flex-col items-center p-8 rounded-xl bg-zinc-900 shadow-2xl border border-zinc-700 max-w-md">
+            <div 
+              className="w-12 h-12 rounded-full flex items-center justify-center mb-4"
+              style={{ backgroundColor: `${accent.dark}20` }}
+            >
+              <Upload className="w-6 h-6" style={{ color: accent.light }} />
+            </div>
+            <h2 className="text-xl font-semibold text-zinc-100 mb-2">Large Upload Detected</h2>
+            <p className="text-sm text-zinc-400 text-center mb-4">
+              You're uploading {largeFileWarning.totalSize.toFixed(1)} MB of files. 
+              Processing large files can take several minutes. The app will be unresponsive during this time.
+            </p>
+            <div className="flex gap-3 w-full">
+              <button
+                onClick={() => {
+                  setLargeFileWarning({ show: false, files: [], totalSize: 0 });
+                  fileInputRef.current?.click();
+                }}
+                className="flex-1 px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 transition-colors text-sm font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => performUpload(largeFileWarning.files)}
+                className="flex-1 px-4 py-2 rounded-lg font-medium transition-all text-white"
+                style={{ backgroundColor: accent.dark }}
+              >
+                Upload Anyway
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Upload processing modal */}
+      {isUploading && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="flex flex-col items-center p-8 rounded-xl bg-zinc-900 shadow-2xl border border-zinc-700">
+            <div 
+              className="w-12 h-12 rounded-full border-4 border-t-transparent animate-spin mb-4"
+              style={{ borderColor: `${accent.light} transparent ${accent.light} ${accent.light}` }}
+            />
+            <p className="text-lg font-medium text-zinc-200">Processing Files...</p>
+            <p className="text-sm text-zinc-400 mt-2">This may take several minutes for large files.</p>
+            <p className="text-xs text-zinc-500 mt-1">Please wait and do not close the app.</p>
+          </div>
+        </div>
+      )}
+
+      {/* Notifications - Bottom Right */}
+      <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2">
         {notifications.map(n => (
           <div
             key={n.id}
@@ -353,13 +384,12 @@ export default function InklingUI() {
 
       <header className="border-b border-zinc-800 bg-zinc-900/50 backdrop-blur-sm sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div 
-              className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm"
-              style={{ backgroundColor: accent.dark }}
-            >
-              I
-            </div>
+          <div className="flex items-center gap-3 cursor-pointer" onClick={() => setQuery('')}>
+            <img 
+              src={`/icons/inkling-${selectedAccent}.png`}
+              alt="Inkling"
+              className="w-8 h-8"
+            />
             <h1 className="text-xl font-semibold">Inkling</h1>
           </div>
 
@@ -444,7 +474,6 @@ export default function InklingUI() {
                   { value: 'all', label: 'All Files', icon: Folder },
                   { value: 'pdf', label: 'PDFs', icon: FileText },
                   { value: 'text', label: 'Text Files', icon: File },
-                  { value: 'archive', label: 'Archives', icon: Archive }
                 ].map(option => {
                   const Icon = option.icon;
                   return (
@@ -617,19 +646,6 @@ export default function InklingUI() {
             All data stays local on your machine • Powered by semantic search
           </p>
         </div>
-
-        {isUploading && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
-            <div className="flex flex-col items-center p-8 rounded-xl bg-zinc-900 shadow-2xl border border-zinc-700">
-              <div 
-                className="w-10 h-10 rounded-full border-4 border-t-transparent animate-spin mb-4"
-                style={{ borderColor: `${accent.light} transparent ${accent.light} ${accent.light}` }}
-              />
-              <p className="text-lg font-medium text-zinc-200">Processing Upload...</p>
-              <p className="text-sm text-zinc-400 mt-1">This may take a moment for large files.</p>
-            </div>
-          </div>
-        )}
       </footer>
     </div>
   );

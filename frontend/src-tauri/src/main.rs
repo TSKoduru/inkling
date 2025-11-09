@@ -1,6 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-use std::{process::Command, thread, time::Duration, fs, path::PathBuf};
+use std::{process::Command, thread, time::Duration, fs, path::PathBuf, sync::Mutex};
 use tauri::Manager;
+
+// Track if backend is already running
+static BACKEND_STARTED: Mutex<bool> = Mutex::new(false);
 
 fn get_port_file_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
     let data_dir = match app_handle.path().app_data_dir() {
@@ -18,6 +21,15 @@ fn get_port_file_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> 
 
 #[tauri::command]
 fn start_backend(app_handle: tauri::AppHandle) -> Result<(), String> {
+    // Only start backend once
+    {
+        let mut started = BACKEND_STARTED.lock().unwrap();
+        if *started {
+            return Ok(());
+        }
+        *started = true;
+    }
+
     let port_file_path = get_port_file_path(&app_handle)?;
     let port_file_path_str = port_file_path.to_string_lossy().to_string();
 
@@ -26,20 +38,17 @@ fn start_backend(app_handle: tauri::AppHandle) -> Result<(), String> {
 
     // Find the Python script - different paths for dev vs production
     let python_script_path = if cfg!(debug_assertions) {
-        // In development: from src-tauri, go ../../backend/app/main.py
         let cargo_manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
             .map_err(|e| format!("Failed to get CARGO_MANIFEST_DIR: {}", e))?;
         let src_tauri_dir = PathBuf::from(cargo_manifest_dir);
         src_tauri_dir.join("..").join("..").join("backend").join("app").join("main.py")
     } else {
-        // In production, use the bundled resources
-        let resource_dir = match app_handle.path().resource_dir() {
-            Ok(dir) => dir,
-            Err(e) => return Err(format!("Failed to find bundled resource directory: {}", e)),
-        };
+        // In production, backend is bundled with the app
+        let resource_dir = app_handle.path().resource_dir()
+            .map_err(|e| format!("Failed to find resource directory: {}", e))?;
         resource_dir.join("backend").join("app").join("main.py")
     };
-
+    
     // Canonicalize the path to resolve .. components
     let python_script_path = python_script_path.canonicalize()
         .map_err(|e| format!("Failed to canonicalize path {:?}: {}", python_script_path, e))?;
@@ -73,16 +82,6 @@ fn start_backend(app_handle: tauri::AppHandle) -> Result<(), String> {
         ("python".to_string(), "system python")
     };
 
-    #[cfg(debug_assertions)]
-    {
-        println!("=== Backend Startup Debug Info ===");
-        println!("Python script path: {:?}", python_script_path);
-        println!("Backend directory: {:?}", backend_dir);
-        println!("Using Python: {} ({})", python_cmd, python_desc);
-        println!("Port file path: {:?}", port_file_path);
-        println!("==================================");
-    }
-
     // Get the project root (parent of backend/)
     let project_root = backend_dir.parent()
         .ok_or("Could not determine project root")?;
@@ -97,9 +96,6 @@ fn start_backend(app_handle: tauri::AppHandle) -> Result<(), String> {
 
     // If the first attempt fails, try fallbacks
     if child.is_err() {
-        #[cfg(debug_assertions)]
-        println!("{} not found, trying fallbacks...", python_desc);
-        
         // Try python3
         child = if cfg!(debug_assertions) {
             Command::new("python3")
@@ -150,17 +146,9 @@ fn start_backend(app_handle: tauri::AppHandle) -> Result<(), String> {
         )
     })?;
 
-    // Wait for the port file to appear (increased timeout for ML model loading)
-    for i in 0..150 { // 30 seconds total (150 × 200ms)
-        if i % 10 == 0 {
-            #[cfg(debug_assertions)]
-            println!("Waiting for backend to write port file... (attempt {}/150)", i + 1);
-        }
-        
+    // Wait for the port file to appear
+    for _ in 0..150 { // 30 seconds total
         if fs::metadata(&port_file_path).is_ok() {
-            #[cfg(debug_assertions)]
-            println!("✅ Backend port file found!");
-            
             // Give it a moment to write the port
             thread::sleep(Duration::from_millis(100));
             return Ok(());
@@ -188,11 +176,6 @@ fn get_backend_port(app_handle: tauri::AppHandle) -> Result<u16, String> {
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![start_backend, get_backend_port])
-        .setup(|_app| {
-            #[cfg(debug_assertions)]
-            println!("Inkling app started in debug mode");
-            Ok(())
-        })
         .run(tauri::generate_context!())
         .expect("error while running Inkling Tauri app");
 }

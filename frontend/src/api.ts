@@ -2,10 +2,6 @@
 // NOTE: This will be cleared when calling startBackend to ensure fresh connection
 let backendPort: number | null = null;
 
-function clearBackendPortCache() {
-  backendPort = null;
-}
-
 // Check if we're running in Tauri more robustly
 function isTauriEnvironment(): boolean {
   if (typeof window === 'undefined') return false;
@@ -45,10 +41,8 @@ async function tauriInvoke<T>(cmd: string, args?: any): Promise<T> {
  * Falls back to a default port for browser development.
  */
 async function getBackendPort(): Promise<number> {
-  console.log("getBackendPort called, isTauri:", isTauriEnvironment());
   
   if (backendPort) {
-    console.log("Returning cached port:", backendPort);
     return backendPort;
   }
 
@@ -60,9 +54,7 @@ async function getBackendPort(): Promise<number> {
   }
 
   try {
-    console.log("Attempting to invoke get_backend_port...");
     backendPort = await tauriInvoke<number>("get_backend_port");
-    console.log("Got backend port:", backendPort);
     
     if (!backendPort) throw new Error("Backend port not found");
   } catch (err) {
