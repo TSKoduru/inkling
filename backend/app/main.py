@@ -3,6 +3,13 @@ FastAPI app with lazy-loaded heavy dependencies.
 """
 import sys
 import socket
+from pathlib import Path
+
+# FIX: Add project root to sys.path so imports work from anywhere
+_script_dir = Path(__file__).parent.parent.parent  # backend/app/main.py -> project root
+if str(_script_dir) not in sys.path:
+    sys.path.insert(0, str(_script_dir))
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn

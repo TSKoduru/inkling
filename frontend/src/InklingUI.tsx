@@ -275,14 +275,17 @@ export default function InklingUI() {
 
       async function checkBackend() {
         try {
+          // Wait for backend to actually respond
+          await getStats();
+          console.log("Backend is ready!");
           setIsAppLoading(false);
           clearInterval(interval);
         } catch (err) {
-          console.warn("⏳ Backend not ready, retrying...", err);
+          console.warn("Backend not ready yet, retrying...", err);
         }
       }
     
-      interval = setInterval(checkBackend, 2000);
+      interval = setInterval(checkBackend, 1000);
       checkBackend();
     }
 
