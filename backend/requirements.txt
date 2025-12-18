@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+supabase
+markitdown
+python-multipart
+requests
