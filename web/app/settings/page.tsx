@@ -4,7 +4,6 @@
 import { useEffect, useState } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { useRouter } from 'next/navigation';
-import { useTheme } from '../providers'; // Import the hook
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -16,18 +15,9 @@ interface Integration {
   sync_status: string;
 }
 
-const COLORS = [
-  { name: 'Midnight', value: '#000000' },
-  { name: 'Crimson', value: '#dc2626' }, // red-600
-  { name: 'Royal', value: '#2563eb' },   // blue-600
-  { name: 'Emerald', value: '#16a34a' }, // green-600
-  { name: 'Violet', value: '#9333ea' },  // purple-600
-  { name: 'Sunset', value: '#ea580c' },  // orange-600
-];
-
 export default function SettingsPage() {
   const router = useRouter();
-  const { accentColor, setAccentColor } = useTheme(); // Use the hook
+  // Removed useTheme hook
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -43,7 +33,7 @@ export default function SettingsPage() {
         const res = await fetch(`http://localhost:8000/api/v1/integrations/list?user_id=${user.id}`);
         const data = await res.json();
         
-        if (data.connected && typeof data.connected[0] === 'string') {
+        if (data.connected && Array.isArray(data.connected)) {
              setIntegrations(data.connected.map((p: string) => ({ provider: p, sync_status: 'success' })));
         } else {
              setIntegrations(data.integrations || []);
@@ -57,8 +47,8 @@ export default function SettingsPage() {
     fetchIntegrations();
   }, [router]);
 
-  const handleGoogleConnect = async () => {
-    const res = await fetch('http://localhost:8000/api/v1/integrations/google/auth-url');
+  const handleConnect = async (service: string) => {
+    const res = await fetch(`http://localhost:8000/api/v1/integrations/google/auth-url?service=${service}`);
     const data = await res.json();
     if (data.url) window.location.href = data.url;
   };
@@ -66,13 +56,12 @@ export default function SettingsPage() {
   const getStatusIndicator = (integration: Integration) => {
     if (integration.sync_status === 'syncing') {
       return (
-        // Changed text-blue-700 to dynamic text color
-        <div className="flex items-center gap-2 px-3 py-1 bg-gray-50 rounded-full text-xs font-medium border border-gray-200">
-           <svg className="animate-spin h-3 w-3" style={{ color: accentColor }} viewBox="0 0 24 24">
+        <div className="flex items-center gap-2 px-3 py-1 bg-blue-50 text-blue-700 rounded-full text-xs font-medium border border-blue-100">
+           <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
           </svg>
-          <span style={{ color: accentColor }}>Indexing...</span>
+          <span>Indexing...</span>
         </div>
       );
     }
@@ -98,11 +87,12 @@ export default function SettingsPage() {
     );
   }
 
-  const googleIntegration = integrations.find(i => i.provider === 'google_drive');
+  const driveIntegration = integrations.find(i => i.provider === 'google_drive');
+  const gmailIntegration = integrations.find(i => i.provider === 'gmail');
 
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-8">
-      <div className="w-full max-w-2xl space-y-8"> {/* Added space-y-8 for separation */}
+      <div className="w-full max-w-2xl space-y-8">
         
         <div className="flex items-center justify-between">
           <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Settings</h1>
@@ -111,11 +101,9 @@ export default function SettingsPage() {
           </button>
         </div>
 
-        {/* 1. Integrations Card */}
+        {/* Google Drive Card */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
-          <h2 className="text-lg font-semibold text-black mb-6">Connected Apps</h2>
-          
-          <div className="flex items-center justify-between py-4">
+          <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 bg-gray-100 rounded-xl flex items-center justify-center text-gray-900">
                 <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
@@ -123,46 +111,51 @@ export default function SettingsPage() {
                 </svg>
               </div>
               <div>
-                <p className="font-semibold text-gray-900">Google</p>
-                <p className="text-sm text-gray-500">Syncs Drive, Docs, and Gmail</p>
+                <p className="font-semibold text-gray-900">Google Drive</p>
+                <p className="text-sm text-gray-500">Syncs Docs and Files</p>
               </div>
             </div>
 
-            {googleIntegration ? (
-              getStatusIndicator(googleIntegration)
+            {driveIntegration ? (
+              getStatusIndicator(driveIntegration)
             ) : (
               <button
-                onClick={handleGoogleConnect}
-                style={{ backgroundColor: accentColor }} // Dynamic Color
-                className="px-5 py-2.5 text-white rounded-lg text-sm font-medium hover:opacity-90 transition-all hover:shadow-lg"
+                onClick={() => handleConnect('google_drive')}
+                className="px-5 py-2.5 bg-black text-white rounded-lg text-sm font-medium hover:opacity-90 transition-all hover:shadow-lg"
               >
-                Connect
+                Connect Drive
               </button>
             )}
           </div>
         </div>
 
-        {/* 2. Appearance Card */}
+        {/* Gmail Card */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
-          <h2 className="text-lg font-semibold text-black mb-6">Appearance</h2>
-          
-          <div className="flex items-center gap-4">
-            {COLORS.map((color) => (
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-gray-100 rounded-xl flex items-center justify-center text-gray-900">
+                <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/>
+                </svg>
+              </div>
+              <div>
+                <p className="font-semibold text-gray-900">Gmail</p>
+                <p className="text-sm text-gray-500">Syncs Emails</p>
+              </div>
+            </div>
+
+            {gmailIntegration ? (
+              getStatusIndicator(gmailIntegration)
+            ) : (
               <button
-                key={color.value}
-                onClick={() => setAccentColor(color.value)}
-                className={`w-10 h-10 rounded-full border-2 transition-all duration-200 ${
-                  accentColor === color.value 
-                    ? 'border-gray-400 scale-110 shadow-md' 
-                    : 'border-transparent hover:scale-105'
-                }`}
-                style={{ backgroundColor: color.value }}
-                title={color.name}
-              />
-            ))}
+                onClick={() => handleConnect('gmail')}
+                className="px-5 py-2.5 bg-black text-white rounded-lg text-sm font-medium hover:opacity-90 transition-all hover:shadow-lg"
+              >
+                Connect Gmail
+              </button>
+            )}
           </div>
         </div>
-
       </div>
     </div>
   );

@@ -1,3 +1,4 @@
+# backend/models/api.py
 from pydantic import BaseModel
 from typing import List, Optional
 
@@ -12,4 +13,5 @@ class SearchResponse(BaseModel):
 
 class GoogleConnectRequest(BaseModel):
     code: str
-    user_id: str # Ideally we extract this from a JWT, but for MVP we'll pass it
+    user_id: str
+    service: str = "google_drive" # Default to drive if missing
