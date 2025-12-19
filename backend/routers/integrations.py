@@ -1,10 +1,11 @@
 # backend/routers/integrations.py
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, BackgroundTasks
 from config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI, supabase
 from models.api import GoogleConnectRequest
 import requests
 import urllib.parse
 from datetime import datetime, timedelta
+from services.indexer import index_google_drive
 
 router = APIRouter()
 
@@ -30,7 +31,7 @@ def get_google_auth_url():
     return {"url": url}
 
 @router.post("/google/connect")
-def connect_google_drive(request: GoogleConnectRequest):
+def connect_google_drive(request: GoogleConnectRequest, background_tasks: BackgroundTasks):
     token_url = "https://oauth2.googleapis.com/token"
     payload = {
         "client_id": GOOGLE_CLIENT_ID,
@@ -69,7 +70,9 @@ def connect_google_drive(request: GoogleConnectRequest):
         ).execute()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-        
+    
+    background_tasks.add_task(index_google_drive, request.user_id)
+
     return {"status": "connected", "provider": "google_drive"}
 
 @router.get("/list")
