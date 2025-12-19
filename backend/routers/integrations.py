@@ -5,7 +5,7 @@ from models.api import GoogleConnectRequest
 import requests
 import urllib.parse
 from datetime import datetime, timedelta
-from services.indexer import index_google_drive
+from services.indexer import index_google_drive, index_gmail
 
 router = APIRouter()
 
@@ -72,6 +72,7 @@ def connect_google_drive(request: GoogleConnectRequest, background_tasks: Backgr
         raise HTTPException(status_code=500, detail=str(e))
     
     background_tasks.add_task(index_google_drive, request.user_id)
+    background_tasks.add_task(index_gmail, request.user_id)
 
     return {"status": "connected", "provider": "google_drive"}
 

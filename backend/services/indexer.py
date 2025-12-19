@@ -2,9 +2,14 @@ import requests
 from config import supabase
 from datetime import datetime
 
-# Helper to fetch the integration record
-def get_integration(user_id: str):
-    response = supabase.table("integrations").select("id, access_token").eq("user_id", user_id).eq("provider", "google_drive").single().execute()
+# Helper updated to support different providers
+def get_integration(user_id: str, provider: str = "google_drive"):
+    response = supabase.table("integrations") \
+        .select("id, access_token") \
+        .eq("user_id", user_id) \
+        .eq("provider", provider) \
+        .single() \
+        .execute()
     return response.data
 
 def index_google_drive(user_id: str):
@@ -74,4 +79,71 @@ def index_google_drive(user_id: str):
 
     except Exception as e:
         print(f"Indexing Failed: {e}")
+        supabase.table("integrations").update({"sync_status": "error"}).eq("user_id", user_id).execute()
+
+def index_gmail(user_id: str):
+    print(f"--- Starting Gmail Indexing for {user_id} ---")
+    
+    try:
+        # 1. Update status to syncing (assuming 'gmail' provider record exists)
+        supabase.table("integrations").update({"sync_status": "syncing"}) \
+            .eq("user_id", user_id).eq("provider", "google_drive").execute() 
+
+        # 2. Get Credentials
+        # Note: In your current setup, Google Drive and Gmail share the same OAuth token
+        integration = get_integration(user_id, provider="google_drive")
+        access_token = integration['access_token']
+        integration_id = integration['id']
+
+        headers = {"Authorization": f"Bearer {access_token}"}
+        
+        # 3. List Messages (Latest 10 for MVP)
+        list_url = "https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=10"
+        res = requests.get(list_url, headers=headers)
+        messages = res.json().get('messages', [])
+
+        for msg_meta in messages:
+            # 4. Fetch Full Message Content
+            msg_url = f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{msg_meta['id']}"
+            msg_res = requests.get(msg_url, headers=headers).json()
+            
+            # Extract Subject from headers
+            headers_list = msg_res.get('payload', {}).get('headers', [])
+            subject = next((h['value'] for h in headers_list if h['name'] == 'Subject'), "No Subject")
+            
+            # For MVP, we use the 'snippet'. For full body, you'd need to parse the 'payload'.
+            body_text = msg_res.get('snippet', "")
+            
+            print(f"Processing Email: {subject}")
+
+            # 5. Insert into 'documents'
+            doc_data = {
+                "user_id": user_id,
+                "integration_id": integration_id,
+                "external_id": msg_res['id'],
+                "name": subject,
+                "mime_type": "text/email",
+                "url": f"https://mail.google.com/mail/u/0/#inbox/{msg_res['id']}",
+                "created_at_external": datetime.fromtimestamp(int(msg_res['internalDate'])/1000).isoformat(),
+                "modified_at_external": datetime.fromtimestamp(int(msg_res['internalDate'])/1000).isoformat(),
+                "last_synced_at": datetime.utcnow().isoformat()
+            }
+            
+            doc_res = supabase.table("documents").insert(doc_data).execute()
+            doc_id = doc_res.data[0]['id']
+
+            # 6. Insert into 'document_chunks'
+            chunk_data = {
+                "document_id": doc_id,
+                "content": body_text,
+                "chunk_index": 0
+            }
+            supabase.table("document_chunks").insert(chunk_data).execute()
+
+        # 7. Success
+        supabase.table("integrations").update({"sync_status": "success"}).eq("id", integration_id).execute()
+        print("--- Gmail Indexing Complete ---")
+
+    except Exception as e:
+        print(f"Gmail Indexing Failed: {e}")
         supabase.table("integrations").update({"sync_status": "error"}).eq("user_id", user_id).execute()
