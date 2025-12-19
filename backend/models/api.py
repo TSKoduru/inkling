@@ -9,3 +9,7 @@ class SearchRequest(BaseModel):
 class SearchResponse(BaseModel):
     results: List[dict]
     latency_ms: float
+
+class GoogleConnectRequest(BaseModel):
+    code: str
+    user_id: str # Ideally we extract this from a JWT, but for MVP we'll pass it
