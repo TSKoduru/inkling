@@ -30,9 +30,5 @@ services:
       - WATCHPACK_POLLING=true
     command: npm run dev
 
-  api:
-      stdin_open: true
-      tty: true
-
 volumes:
   node_modules_volume:
