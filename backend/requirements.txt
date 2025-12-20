@@ -4,3 +4,8 @@ supabase
 markitdown
 python-multipart
 requests
+sentence-transformers
+scikit-learn
+ftfy
+slack-sdk
+langchain-text-splitters

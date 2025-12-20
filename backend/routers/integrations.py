@@ -1,11 +1,15 @@
 # backend/routers/integrations.py
 from fastapi import APIRouter, HTTPException, BackgroundTasks
-from config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI, supabase
 from models.api import GoogleConnectRequest
 import requests
 import urllib.parse
 from datetime import datetime, timedelta
 from services.indexer import index_google_drive, index_gmail
+from config import (
+    GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI, 
+    SLACK_CLIENT_ID, SLACK_CLIENT_SECRET,
+    supabase
+)
 
 router = APIRouter()
 
@@ -85,6 +89,52 @@ def connect_google_provider(request: GoogleConnectRequest, background_tasks: Bac
         background_tasks.add_task(index_google_drive, request.user_id)
 
     return {"status": "connected", "provider": provider_name}
+
+@router.get("/slack/auth-url")
+def get_slack_auth_url():
+    
+    print(f"DEBUG: Slack Client ID is: '{SLACK_CLIENT_ID}'")
+
+    if not SLACK_CLIENT_ID:
+        return {"error": "Missing Slack Client ID"}
+
+    base = "https://slack.com/oauth/v2/authorize"
+    scope = "channels:history,channels:read,users:read"
+    return {"url": f"{base}?client_id={SLACK_CLIENT_ID}&scope={scope}&user_scope="}
+@router.post("/slack/connect")
+def connect_slack(request: GoogleConnectRequest, background_tasks: BackgroundTasks):
+    # Reuse GoogleConnectRequest since it just needs 'code' and 'user_id'
+    
+    # Exchange code for token
+    res = requests.post("https://slack.com/api/oauth.v2.access", data={
+        "client_id": SLACK_CLIENT_ID,
+        "client_secret": SLACK_CLIENT_SECRET,
+        "code": request.code
+    })
+    data = res.json()
+    
+    if not data.get("ok"):
+        raise HTTPException(400, f"Slack Error: {data.get('error')}")
+
+    access_token = data["access_token"]
+    team_name = data["team"]["name"]
+    
+    # Save to DB
+    db_data = {
+        "user_id": request.user_id,
+        "provider": "slack",
+        "access_token": access_token,
+        "metadata": {"team_name": team_name},
+        "expires_at": None # Slack bot tokens don't expire by default
+    }
+    
+    supabase.table("integrations").upsert(db_data, on_conflict="user_id, provider").execute()
+    
+    # Trigger Indexing
+    from services.indexer import index_slack
+    background_tasks.add_task(index_slack, request.user_id)
+
+    return {"status": "connected", "provider": "slack"}
 
 @router.get("/list")
 def list_integrations(user_id: str):

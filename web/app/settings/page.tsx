@@ -1,159 +1,166 @@
-// web/app/settings/page.tsx
 'use client';
 
-import { useEffect, useState } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!
 );
 
-interface Integration {
-  provider: string;
-  sync_status: string;
-}
-
 export default function SettingsPage() {
   const router = useRouter();
-  // Removed useTheme hook
-  const [integrations, setIntegrations] = useState<Integration[]>([]);
+  const [user, setUser] = useState<any>(null);
+  const [integrations, setIntegrations] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Load User & Integrations
   useEffect(() => {
-    const fetchIntegrations = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
+    const init = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
         router.push('/login');
         return;
       }
-
+      setUser(session.user);
+      
       try {
-        const res = await fetch(`http://localhost:8000/api/v1/integrations/list?user_id=${user.id}`);
+        const res = await fetch(`http://localhost:8000/api/v1/integrations/list?user_id=${session.user.id}`);
         const data = await res.json();
-        
-        if (data.connected && Array.isArray(data.connected)) {
-             setIntegrations(data.connected.map((p: string) => ({ provider: p, sync_status: 'success' })));
-        } else {
-             setIntegrations(data.integrations || []);
-        }
+        setIntegrations(data.connected || []);
       } catch (err) {
-        console.error("Failed to fetch status", err);
+        console.error("Failed to fetch integrations", err);
       } finally {
         setLoading(false);
       }
     };
-    fetchIntegrations();
+    init();
   }, [router]);
 
-  const handleConnect = async (service: string) => {
-    const res = await fetch(`http://localhost:8000/api/v1/integrations/google/auth-url?service=${service}`);
-    const data = await res.json();
-    if (data.url) window.location.href = data.url;
+  // Generic Handler for OAuth Redirects
+  const handleConnect = async (provider: string) => {
+    try {
+      // 1. Get the Auth URL from backend
+      // Note: Endpoint changes based on provider
+      let endpoint = '';
+      if (provider === 'slack') {
+        endpoint = 'http://localhost:8000/api/v1/integrations/slack/auth-url';
+      } else {
+        endpoint = `http://localhost:8000/api/v1/integrations/google/auth-url?service=${provider}`;
+      }
+
+      const res = await fetch(endpoint);
+      const data = await res.json();
+      
+      // 2. Redirect user
+      if (data.url) {
+        window.location.href = data.url;
+      }
+    } catch (err) {
+      console.error(`Failed to start ${provider} auth`, err);
+      alert("Something went wrong connecting to " + provider);
+    }
   };
 
-  const getStatusIndicator = (integration: Integration) => {
-    if (integration.sync_status === 'syncing') {
-      return (
-        <div className="flex items-center gap-2 px-3 py-1 bg-blue-50 text-blue-700 rounded-full text-xs font-medium border border-blue-100">
-           <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-          </svg>
-          <span>Indexing...</span>
-        </div>
-      );
-    }
-    if (integration.sync_status === 'error') {
-       return <span className="text-red-500 text-sm font-medium">Sync Failed</span>;
-    }
-    return (
-      <div className="flex items-center gap-2 px-3 py-1 bg-green-50 text-green-700 rounded-full text-xs font-medium border border-green-100">
-         <span className="h-2 w-2 rounded-full bg-green-500"></span>
-         Connected
-      </div>
-    );
-  };
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-         <div className="animate-pulse flex flex-col items-center">
-            <div className="h-4 w-4 bg-gray-300 rounded-full mb-2"></div>
-            <div className="text-gray-400 text-sm">Loading settings...</div>
-         </div>
-      </div>
-    );
-  }
-
-  const driveIntegration = integrations.find(i => i.provider === 'google_drive');
-  const gmailIntegration = integrations.find(i => i.provider === 'gmail');
+  if (loading) return <div className="p-10 text-center">Loading...</div>;
 
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-8">
-      <div className="w-full max-w-2xl space-y-8">
-        
-        <div className="flex items-center justify-between">
-          <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Settings</h1>
-          <button onClick={() => router.push('/')} className="text-sm font-medium text-gray-500 hover:text-black transition-colors">
-            ← Back to Search
-          </button>
-        </div>
+    <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
+      <div className="max-w-3xl mx-auto">
+        <div className="bg-white shadow sm:rounded-lg">
+          <div className="px-4 py-5 sm:p-6">
+            <h3 className="text-2xl font-semibold leading-6 text-gray-900 mb-8">
+              Data Integrations
+            </h3>
 
-        {/* Google Drive Card */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 bg-gray-100 rounded-xl flex items-center justify-center text-gray-900">
-                <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M12.48 10.92v3.28h7.84c-.24 1.84-.853 3.187-1.787 4.133-1.147 1.147-2.933 2.4-6.053 2.4-4.827 0-8.6-3.893-8.6-8.72s3.773-8.72 8.6-8.72c2.6 0 4.507 1.027 5.907 2.347l2.307-2.307C18.747 1.44 16.133 0 12.48 0 5.867 0 .533 5.333.533 12S5.867 24 12.48 24c3.44 0 6.04-1.133 8.027-3.186 2.053-2.04 2.64-5.2 2.64-7.827 0-.773-.067-1.52-.2-2.067h-10.467z"/>
-                </svg>
+            <div className="grid gap-6">
+              
+              {/* --- GMAIL --- */}
+              <div className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50 transition">
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center text-red-600 font-bold">
+                    M
+                  </div>
+                  <div>
+                    <h4 className="font-medium text-gray-900">Gmail</h4>
+                    <p className="text-sm text-gray-500">Sync emails and threads</p>
+                  </div>
+                </div>
+                {integrations.includes('gmail') ? (
+                  <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                    Connected
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => handleConnect('gmail')}
+                    className="px-4 py-2 text-sm font-medium text-red-600 bg-red-50 rounded-md hover:bg-red-100"
+                  >
+                    Connect
+                  </button>
+                )}
               </div>
-              <div>
-                <p className="font-semibold text-gray-900">Google Drive</p>
-                <p className="text-sm text-gray-500">Syncs Docs and Files</p>
+
+              {/* --- GOOGLE DRIVE --- */}
+              <div className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50 transition">
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-bold">
+                    D
+                  </div>
+                  <div>
+                    <h4 className="font-medium text-gray-900">Google Drive</h4>
+                    <p className="text-sm text-gray-500">Sync docs and files</p>
+                  </div>
+                </div>
+                {integrations.includes('google_drive') ? (
+                  <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                    Connected
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => handleConnect('google_drive')}
+                    className="px-4 py-2 text-sm font-medium text-blue-600 bg-blue-50 rounded-md hover:bg-blue-100"
+                  >
+                    Connect
+                  </button>
+                )}
               </div>
+
+              {/* --- SLACK (NEW) --- */}
+              <div className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50 transition">
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center text-purple-600 font-bold">
+                    #
+                  </div>
+                  <div>
+                    <h4 className="font-medium text-gray-900">Slack</h4>
+                    <p className="text-sm text-gray-500">Sync public channels</p>
+                  </div>
+                </div>
+                {integrations.includes('slack') ? (
+                  <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                    Connected
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => handleConnect('slack')}
+                    className="px-4 py-2 text-sm font-medium text-purple-600 bg-purple-50 rounded-md hover:bg-purple-100"
+                  >
+                    Connect
+                  </button>
+                )}
+              </div>
+
             </div>
 
-            {driveIntegration ? (
-              getStatusIndicator(driveIntegration)
-            ) : (
-              <button
-                onClick={() => handleConnect('google_drive')}
-                className="px-5 py-2.5 bg-black text-white rounded-lg text-sm font-medium hover:opacity-90 transition-all hover:shadow-lg"
+            <div className="mt-8 pt-6 border-t flex justify-end">
+              <button 
+                onClick={() => router.push('/')}
+                className="text-gray-600 hover:text-gray-900 font-medium"
               >
-                Connect Drive
+                Back to Search
               </button>
-            )}
-          </div>
-        </div>
-
-        {/* Gmail Card */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 bg-gray-100 rounded-xl flex items-center justify-center text-gray-900">
-                <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/>
-                </svg>
-              </div>
-              <div>
-                <p className="font-semibold text-gray-900">Gmail</p>
-                <p className="text-sm text-gray-500">Syncs Emails</p>
-              </div>
             </div>
-
-            {gmailIntegration ? (
-              getStatusIndicator(gmailIntegration)
-            ) : (
-              <button
-                onClick={() => handleConnect('gmail')}
-                className="px-5 py-2.5 bg-black text-white rounded-lg text-sm font-medium hover:opacity-90 transition-all hover:shadow-lg"
-              >
-                Connect Gmail
-              </button>
-            )}
           </div>
         </div>
       </div>
