@@ -1,0 +1,62 @@
+services:
+
+  # Database
+  db:
+    image: pgvector/pgvector:pg16
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=inkling
+      - POSTGRES_USER=inkling_user
+      - POSTGRES_PASSWORD=secret_password
+
+  # Redis (For Celery Tasks)
+  redis:
+    image: redis:7-alpine
+
+  # Django Backend
+  backend:
+    build: ./backend
+
+    # Use 0.0.0.0 to expose the server to Docker
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+      - redis
+    environment:
+      - DATABASE_URL=postgres://inkling_user:secret_password@db:5432/inkling
+      - CELERY_BROKER_URL=redis://redis:6379/0
+
+  # Celery Worker (Background Tasks)
+  worker:
+    build: ./backend
+    command: celery -A config worker --loglevel=info
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - db
+      - redis
+    environment:
+      - DATABASE_URL=postgres://inkling_user:secret_password@db:5432/inkling
+      - CELERY_BROKER_URL=redis://redis:6379/0
+
+  # React Frontend
+  frontend:
+      image: node:20-alpine
+      working_dir: /app
+      volumes:
+        - ./frontend:/app
+        - /app/node_modules
+      ports:
+        - "5173:5173"
+      # UPDATED COMMAND: Install dependencies inside the container, then start Vite
+      command: sh -c "npm install && npm run dev -- --host"
+      environment:
+        - VITE_API_URL=http://localhost:8000
+
+volumes:
+  postgres_data:
